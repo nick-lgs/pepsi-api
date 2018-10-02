@@ -1,0 +1,41 @@
+<links>
+	<link>
+		<title>MARKETING ASSETS</title>
+		<path_id>1765</path_id>
+		<filters>
+			<filter>
+				<solr_name>field196</solr_name>
+				<metadata_id>196</metadata_id>
+				<search_term>true</search_term>
+			</filter>
+		</filters>
+		<groups>
+			<group>PEP_Marketing</group>
+			<group>PEP_Admin</group>
+			<group>PEP_SuperAdmin</group>
+		</groups>
+	</link>
+	<link>
+		<title>MASTER ASSETS</title>
+		<path_id>1765</path_id>
+		<filters>
+		</filters>
+		<groups>
+			<group>PEP_Admin</group>
+			<group>PEP_SuperAdmin</group>
+			<group>PEP_Agency</group>
+		</groups>
+	</link>
+	<link>
+		<title>PRODUCTION</title>
+		<path_id></path_id>
+		<volume_name>WIP</volume_name>
+		<filters>
+		</filters>
+		<groups>
+			<group>PEP_Admin</group>
+			<group>PEP_SuperAdmin</group>
+			<group>PEP_Agency</group>
+		</groups>
+	</link>
+</links>
