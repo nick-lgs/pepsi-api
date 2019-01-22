@@ -283,24 +283,26 @@ class PortalDI_Connector
 						return $result["ERROR_MSG"];
 					} else {
 						$nav_info = $result["NAVIGATOR_INFO"];
+						
+						if(isset($nav_info[0]["FILE_ID"])) {
 
-						if($getSubItems) {
-							foreach(array_keys($nav_info) as $k) {
-								$url = "http://{$this->wnServer}/webnative/portalDI?";
-								$url .= "action=navigator";
-								$url .= "&fileid=".$nav_info[$k]["FILE_ID"];
-								$result = json_decode($this->curlObj->fetch_url($url),true);
-								if(sizeof($result["NAVIGATOR_INFO"][0]) == 0) {
-									$nav_info[$k]["foldercount"] = 0;
-								} else {
-									$nav_info[$k]["foldercount"] = sizeof($result["NAVIGATOR_INFO"]);
+							if($getSubItems) {
+								foreach(array_keys($nav_info) as $k) {
+									$url = "http://{$this->wnServer}/webnative/portalDI?";
+									$url .= "action=navigator";
+									$url .= "&fileid=".$nav_info[$k]["FILE_ID"];
+									$result = json_decode($this->curlObj->fetch_url($url),true);
+									if(sizeof($result["NAVIGATOR_INFO"][0]) == 0) {
+										$nav_info[$k]["foldercount"] = 0;
+									} else {
+										$nav_info[$k]["foldercount"] = sizeof($result["NAVIGATOR_INFO"]);
+									}
 								}
 							}
+							foreach($nav_info AS $k => $value) {
+								array_push($files,$value);
+							}
 						}
-						foreach($nav_info AS $k => $value) {
-							array_push($files,$value);
-						}
-						
 						return array("files" => $files, "facets" => $facets, "info" => $info);
 					}
 				}
@@ -405,21 +407,23 @@ class PortalDI_Connector
 				} else {
 					$nav_info = $result["NAVIGATOR_INFO"];
 
-					if($getSubItems) {
-						foreach(array_keys($nav_info) as $k) {
-							$url = "http://{$this->wnServer}/webnative/portalDI?";
-							$url .= "action=navigator";
-							$url .= "&fileid=".$nav_info[$k]["FILE_ID"];
-							$result = json_decode($this->curlObj->fetch_url($url),true);
-							if(sizeof($result["NAVIGATOR_INFO"][0]) == 0) {
-								$nav_info[$k]["foldercount"] = 0;
-							} else {
-								$nav_info[$k]["foldercount"] = sizeof($result["NAVIGATOR_INFO"]);
+					if(isset($nav_info[0]["FILE_ID"])) {
+						if($getSubItems) {
+							foreach(array_keys($nav_info) as $k) {
+								$url = "http://{$this->wnServer}/webnative/portalDI?";
+								$url .= "action=navigator";
+								$url .= "&fileid=".$nav_info[$k]["FILE_ID"];
+								$result = json_decode($this->curlObj->fetch_url($url),true);
+								if(sizeof($result["NAVIGATOR_INFO"][0]) == 0) {
+									$nav_info[$k]["foldercount"] = 0;
+								} else {
+									$nav_info[$k]["foldercount"] = sizeof($result["NAVIGATOR_INFO"]);
+								}
 							}
 						}
-					}
-					foreach($nav_info AS $k => $value) {
-						array_push($files,$value);
+						foreach($nav_info AS $k => $value) {
+							array_push($files,$value);
+						}
 					}
 					return array("files" => $files, "facets" => $facets, "info" => $info);
 				}
@@ -532,7 +536,9 @@ class PortalDI_Connector
 			$url .= $perPageStr;
 			$url .= $pageStr;
 			$url .= "&searchsubdirs=true";
-			$url .= "&quicksearch_0_0=".urlencode($val);
+			if($val != "") {
+				$url .= "&quicksearch_0_0=".urlencode($val);
+			}
 			if($sort_criteria) {
 				$url .= "&sort=$sort_criteria+$sort_order";
 			}
@@ -703,11 +709,148 @@ class PortalDI_Connector
 		}
 	}
 
-	public function manageBasket() {
-		$url = "http://{$this->wnServer}/webnative/plugins/basketadmin?/var/adm/webnative/pepsi_super/192.168.98.32.70f50696.basket";
-//		print $url;
+	public function manageBasketGet() {
+
+		$user_info = $this->getUserInfo();
+		$basketname = $user_info["BASKETFILE"];
+		
+		$url = "http://{$this->wnServer}/webnative/plugins/basketadmin?$basketname";
+		
 		$result = $this->curlObj->fetch_url($url);
-		return $result;
+
+		$resultArray = explode("\n", $result);
+		
+		$basket_list = array();
+		foreach($resultArray as $line) {
+			if($this->StartsWith($line, "baskets[")) {
+				$tmparr = explode("] = '", $line);
+				$tmparr2 = explode("'", $tmparr[1]);
+				$basket_list[] = $tmparr2[0];
+			}
+		}
+		
+		return($basket_list);
+		
+	}
+
+	public function manageBasketSave($newname) {
+
+		$user_info = $this->getUserInfo();
+		$basketname = $user_info["BASKETFILE"];
+		
+		$url = "http://{$this->wnServer}/webnative/plugins/basketadmin?$basketname";
+		
+		$form_data["action"] = "save";
+		$form_data["newname"] = urlencode($newname);
+		
+		$result = $this->curlObj->send_post_data($url, $form_data, null, 3);
+		
+		$resultArray = explode("\n", $result);
+		
+		$basket_list = array();
+		foreach($resultArray as $line) {
+			if($this->StartsWith($line, "baskets[")) {
+				$tmparr = explode("] = '", $line);
+				$tmparr2 = explode("'", $tmparr[1]);
+				$basket_list[] = $tmparr2[0];
+			}
+		}
+		
+		return($basket_list);
+
+	}
+
+	public function manageBasketAppend($savedbasket) {
+	
+		$vols = $this->getVolumes();
+		$firstFileID = $vols[0]["FILE_ID"];
+		$this->addBasket($firstFileID);
+
+		$user_info = $this->getUserInfo();
+		$basketname = $user_info["BASKETFILE"];
+		
+		$url = "http://{$this->wnServer}/webnative/plugins/basketadmin?$basketname";
+		
+		$form_data["action"] = "add";
+		$form_data["bsklist"] = urlencode($savedbasket);
+		
+		$result = $this->curlObj->send_post_data($url, $form_data, null, 3);
+		
+		$resultArray = explode("\n", $result);
+		
+		$basket_list = array();
+		foreach($resultArray as $line) {
+			if($this->StartsWith($line, "baskets[")) {
+				$tmparr = explode("] = '", $line);
+				$tmparr2 = explode("'", $tmparr[1]);
+				$basket_list[] = $tmparr2[0];
+			}
+		}
+		
+		$this->removeBasket($firstFileID);
+
+		return($basket_list);
+
+	}
+
+	public function manageBasketReplace($savedbasket) {
+
+		$vols = $this->getVolumes();
+		$firstFileID = $vols[0]["FILE_ID"];
+		$this->addBasket($firstFileID);
+
+		$user_info = $this->getUserInfo();
+		$basketname = $user_info["BASKETFILE"];
+		
+		$url = "http://{$this->wnServer}/webnative/plugins/basketadmin?$basketname";
+		
+		$form_data["action"] = "load";
+		$form_data["bsklist"] = urlencode($savedbasket);
+		
+		$result = $this->curlObj->send_post_data($url, $form_data, null, 3);
+		
+		$resultArray = explode("\n", $result);
+		
+		$basket_list = array();
+		foreach($resultArray as $line) {
+			if($this->StartsWith($line, "baskets[")) {
+				$tmparr = explode("] = '", $line);
+				$tmparr2 = explode("'", $tmparr[1]);
+				$basket_list[] = $tmparr2[0];
+			}
+		}
+		
+		$this->removeBasket($firstFileID);
+
+		return($basket_list);
+
+	}
+
+	public function manageBasketDelete($savedbasket) {
+
+		$user_info = $this->getUserInfo();
+		$basketname = $user_info["BASKETFILE"];
+		
+		$url = "http://{$this->wnServer}/webnative/plugins/basketadmin?$basketname";
+		
+		$form_data["action"] = "delete";
+		$form_data["bsklist"] = urlencode($savedbasket);
+		
+		$result = $this->curlObj->send_post_data($url, $form_data, null, 3);
+		
+		$resultArray = explode("\n", $result);
+		
+		$basket_list = array();
+		foreach($resultArray as $line) {
+			if($this->StartsWith($line, "baskets[")) {
+				$tmparr = explode("] = '", $line);
+				$tmparr2 = explode("'", $tmparr[1]);
+				$basket_list[] = $tmparr2[0];
+			}
+		}
+		
+		return($basket_list);
+
 	}
 
 	public function getFilesInfoId($id, $showKeywords=false, $showVersion=false, $showHistory=false, $custom="", $showFiles=true, $showFolders=false)
@@ -782,11 +925,6 @@ class PortalDI_Connector
 			if($f == "action") unset($form_data[$f]);
 			if($f == "method") unset($form_data[$f]);
 		}
-//		print_r($form_data);
-//		die();
-//		print $url . "<br />";
-//		print_r($form_data);
-//		die();
 		$result = $this->curlObj->send_post_data($url, $form_data, null, 3);
 		return $result;
 	}
@@ -825,12 +963,13 @@ class PortalDI_Connector
 		return $result;
 	}	
 
-	public function shareBasket($form_data)
+	public function sendBasket($form_data)
 	{
 //		$url = "http://{$this->wnServer}/ipik/inalias?action=pwreset&team=" . $teamname;
 		$url = "http://{$this->wnServer}/webnative/plugins/tr_cust?-F+-fassetlink_+".$basketname;
 		foreach(array_keys($form_data) as $f) {
 			if($f == "action") unset($form_data[$f]);
+			if($f == "sendaction") unset($form_data[$f]);
 			if($f == "method") unset($form_data[$f]);
 		}
 		
@@ -885,6 +1024,41 @@ class PortalDI_Connector
 //		die();
 		return $result;
 	}
+	
+	
+	public function getInAliasTeamDetails($teamname)
+	{
+	
+		//$sitename = "Pepsi_Maketing";
+	
+		$url = "http://{$this->wnServer}/cgi-bin/iarep?teamname=".$teamname;
+
+		//$url = "http://{$this->wnServer}/inalias/inalias?".$sitename."+-xml+-admin";
+
+//		$this->setCredentials(base64_encode("nativeadmin:native access"));
+		$result = $this->curlObj->fetch_url($url);
+		
+		$rows = explode("\n", $result);
+
+		$users = array(
+			"active" => 0,
+			"locked" => 0
+		);
+		foreach($rows as $u) {
+			$userArray = explode("|", $u);
+			$tmpUser = array(
+				"username" => $userArray[0],
+				"status" => $userArray[1]
+			);
+			if($tmpUser["status"] == "L" || $tmpUser["status"] == "l") {
+				$users["locked"] = $users["locked"] +1;
+			} else if($tmpUser["status"] == "A" || $tmpUser["status"] == "a") {
+				$users["active"] = $users["active"] +1;
+			}
+		}
+		return $users;
+	}
+		
 
 	public function viewBasket()
 	{
@@ -914,16 +1088,48 @@ class PortalDI_Connector
 		return $result;
 	}
 
-	public function downloadBasket($basket_file_name)
+
+	public function downloadBasketStream($basket_file_name, $id)
+	{
+		session_write_close();
+		$tmp_path = "/tmp/lgs/bsk_$id";
+		$filename = "$tmp_path/$basket_file_name";
+		if(!file_exists($filename)) return false;
+		header("Content-Type: application/x-zip-compressed");
+		header("Content-Disposition: attachment; filename=$basket_file_name");
+		header("Content-Length: " . filesize($filename));
+		
+		readfile($filename);
+		unlink($filename);
+		rmdir($tmp_path);
+		exit;
+	}
+
+	public function downloadBasketRequestBG($basket_file_name) {
+		$basket_id = rand(100000000, 999999999);
+		$_SESSION["baskets"][$basket_id]["complete"] = false;
+		$sess_id = session_id();
+		session_write_close();
+		shell_exec("/usr/bin/php /usr/etc/LGS/apps/PepsiTest/php/makebasket.php ".$sess_id." ".$basket_id." ".$basket_file_name." >/dev/null 2>&1 &");
+		return $basket_id;
+	}
+
+	public function downloadBasketRequest($basket_file_name, $basket_id)
 	{
 	
+		session_start();
+		$_SESSION["baskets"][$basket_id]["complete"] = false;
+		
 		$url = "http://{$this->wnServer}/webnative/portalDI?action=showbasket";
 		$result = json_decode($this->curlObj->fetch_url($url),true);
-		
+
+		$_SESSION["baskets"][$basket_id]["total_items"] = sizeof($result["BASKET_INFO"]);
+		$_SESSION["baskets"][$basket_id]["processed_items"] = 0;
+		session_write_close();
+
 		ignore_user_abort(true);
 		
-		$rnd = rand(100000000, 999999999);
-		$tmp_path = "/tmp/lgs/bsk_$rnd";
+		$tmp_path = "/tmp/lgs/bsk_$basket_id";
 		mkdir($tmp_path, 0777, true);
 		
 		$zip = new ZipArchive();
@@ -935,45 +1141,149 @@ class PortalDI_Connector
 		foreach($result["BASKET_INFO"] as $f) {
 			$this->downloadFile($f["FILE_ID"], "", $tmp_path."/".$f["FILE_NAME"], "", false);
 			$zip->addFile($tmp_path."/".$f["FILE_NAME"],"/".$f["FILE_NAME"]);
+			session_start();
+			$_SESSION["baskets"][$basket_id]["processed_items"] = $_SESSION["baskets"][$basket_id]["processed_items"] + 1;
+			session_write_close();
 		}
+		set_time_limit(600);
 		$zip->close();
 		foreach($result["BASKET_INFO"] as $f) {
 			unlink($tmp_path."/".$f["FILE_NAME"]);
 		}
 
+		session_start();
+		$_SESSION["baskets"][$basket_id]["complete"] = true;
+		session_write_close();
+		
+		return $basket_id;
+		
+	}
+	
+	public function downloadBasketCheck($basket_id) {
+		if(!isset($_SESSION["baskets"][$basket_id])) {
+			return false;
+		}
+		if($_SESSION["baskets"][$basket_id]["complete"]) {
+			$ret_arr = array(
+				"complete" => true
+			);
+		} else {
+			$ret_arr = array(
+				"complete" => false
+			);
+		}
+		return $ret_arr;
+	}
+	
+	public function customOrderBasketRequestBG($options) {
+		$basket_id = rand(100000000, 999999999);
+		$_SESSION["basketorders"][$basket_id]["complete"] = false;
+		$_SESSION["basketorders"][$basket_id]["options"] = $options;
+		$sess_id = session_id();
+		session_write_close();
+		shell_exec("/usr/bin/php /usr/etc/LGS/apps/PepsiTest/php/makebasketorder.php ".$sess_id." ".$basket_id." >/dev/null 2>&1 &");
+		return $basket_id;
+	}
+
+	public function customOrderBasketRequest($basket_id)
+	{
+	
+		session_start();
+		$_SESSION["basketorders"][$basket_id]["complete"] = false;
+		
+		$url = "http://{$this->wnServer}/webnative/portalDI?action=showbasket";
+		$result = json_decode($this->curlObj->fetch_url($url),true);
+
+		$_SESSION["basketorders"][$basket_id]["total_items"] = sizeof($result["BASKET_INFO"]);
+		$_SESSION["basketorders"][$basket_id]["processed_items"] = 0;
+		session_write_close();
+		
+		ignore_user_abort(true);
+		
+		$tmp_path = "/tmp/lgs/bsk_$basket_id";
+		mkdir($tmp_path, 0777, true);
+		
+		$zip = new ZipArchive();
+		$filename = "$tmp_path/PepsiOrderBasket.zip";
+
+		if ($zip->open($filename, ZipArchive::CREATE)!==TRUE) {
+			error("cannot open <$filename>\n");
+		}
+		
+		$options = $_SESSION["basketorders"][$basket_id]["options"];
+		$options[] = array(
+			"name" => "archiveformat",
+			"value" => "zip"
+		);
+		
+		foreach($result["BASKET_INFO"] as $f) {
+			$zip_contents = $this->customOrder($f["FILE_ID"], $options, false);
+			file_put_contents($tmp_path."/".$f["FILE_NAME"].".zip", $zip_contents);
+			$czip = new ZipArchive;
+			if($czip->open($tmp_path."/".$f["FILE_NAME"].".zip") === TRUE) {
+				$czip->extractTo($tmp_path);
+				$czip->close();
+			}
+			unlink($tmp_path."/".$f["FILE_NAME"].".zip");				
+			session_start();
+			$_SESSION["basketorders"][$basket_id]["processed_items"] = $_SESSION["basketorders"][$basket_id]["processed_items"] + 1;
+			session_write_close();
+		}
+		$filelist = scandir($tmp_path);
+		foreach($filelist as $f) {
+			if(is_file($tmp_path."/".$f)) {
+				$zip->addFile($tmp_path."/".$f,$f);
+			}
+		}
+		set_time_limit(600);
+		$zip->close();
+		foreach($filelist as $f) {
+			if(is_file($tmp_path."/".$f)) {
+				unlink($tmp_path."/".$f);
+			}
+		}
+
+		session_start();
+		$_SESSION["basketorders"][$basket_id]["complete"] = true;
+		session_write_close();
+
+		return $basket_id;
+		
+	}
+
+	public function customOrderBasketStream($basket_id) {
+
+		session_write_close();
+		$tmp_path = "/tmp/lgs/bsk_$basket_id";
+		$filename = "$tmp_path/PepsiOrderBasket.zip";
+		if(!file_exists($filename)) return false;
 		header("Content-Type: application/x-zip-compressed");
-		header("Content-Disposition: attachment; filename=$basket_file_name");
+		header("Content-Disposition: attachment; filename=PepsiOrderBasket.zip");
 		header("Content-Length: " . filesize($filename));
 		
 		readfile($filename);
 		unlink($filename);
 		rmdir($tmp_path);
 		exit;
-		
-/*
-		//try to use /webnative/plugins/downloadbasket
-		$user_info = $this->getUserInfo();
-		$basket_file = $user_info["BASKETFILE"];
-		$url = "http://{$this->wnServer}/webnative/plugins/downloadbasket?".$basket_file;
-		$form_data = array(
-			"archName" => "SamsungBasket.zip",
-			"archFmt" => "MACZIP",
-			"exportXMP" => "no"
-		);
-//		curl_setopt($this->curlObj, CURLOPT_HEADER, false);
-		$result = $this->curlObj->send_post_data($url, $form_data);
-		
-//		$header_size = curl_getinfo($this->curlObj, CURLINFO_HEADER_SIZE);
-//		$header = substr($result, 0, $header_size);
-//		$body = substr($result, $header_size);
-//		header("Content-Type: application/x-zip-compressed");
-//		header("Content-Disposition: attachment; filename=SamsungBasket.zip");
-//		header("Content-Length: " . strlen($result));
-		print $result;
-*/
-
-	}
 	
+	}
+
+	public function customOrderBasketCheck($basket_id) {
+		if(!isset($_SESSION["basketorders"][$basket_id])) {
+			return false;
+		}
+		if($_SESSION["basketorders"][$basket_id]["complete"]) {
+			$ret_arr = array(
+				"complete" => true
+			);
+		} else {
+			$ret_arr = array(
+				"complete" => false
+			);
+		}
+		return $ret_arr;
+	}
+
 	public function customOrderBasket($options)
 	{
 	
@@ -987,27 +1297,48 @@ class PortalDI_Connector
 		mkdir($tmp_path, 0777, true);
 		
 		$zip = new ZipArchive();
-		$filename = "$tmp_path/SamsungBasket.zip";
+		$filename = "$tmp_path/PepsiOrderBasket.zip";
 
 		if ($zip->open($filename, ZipArchive::CREATE)!==TRUE) {
 			error("cannot open <$filename>\n");
 		}
+
+/*
 		$options[] = array(
 			"name" => "webready",
 			"value" => "true"
 		);
+*/
+		$options[] = array(
+			"name" => "archiveformat",
+			"value" => "zip"
+		);
+		
 		foreach($result["BASKET_INFO"] as $f) {
-			$img = $this->customOrder($f["FILE_ID"], $options, false);
-			file_put_contents($tmp_path."/".$f["FILE_NAME"], $img);
-			$zip->addFile($tmp_path."/".$f["FILE_NAME"],"/".$f["FILE_NAME"]);
+			$zip_contents = $this->customOrder($f["FILE_ID"], $options, false);
+			file_put_contents($tmp_path."/".$f["FILE_NAME"].".zip", $zip_contents);
+			$czip = new ZipArchive;
+			if($czip->open($tmp_path."/".$f["FILE_NAME"].".zip") === TRUE) {
+				$czip->extractTo($tmp_path);
+				$czip->close();
+			}
+			unlink($tmp_path."/".$f["FILE_NAME"].".zip");				
+		}
+		$filelist = scandir($tmp_path);
+		foreach($filelist as $f) {
+			if(is_file($tmp_path."/".$f)) {
+				$zip->addFile($tmp_path."/".$f,$f);
+			}
 		}
 		$zip->close();
-		foreach($result["BASKET_INFO"] as $f) {
-			unlink($tmp_path."/".$f["FILE_NAME"]);
+		foreach($filelist as $f) {
+			if(is_file($tmp_path."/".$f)) {
+				unlink($tmp_path."/".$f);
+			}
 		}
 
 		header("Content-Type: application/x-zip-compressed");
-		header("Content-Disposition: attachment; filename=SamsungOrderBasket.zip");
+		header("Content-Disposition: attachment; filename=PepsiOrderBasket.zip");
 		header("Content-Length: " . filesize($filename));
 		
 		readfile($filename);
@@ -1021,7 +1352,7 @@ class PortalDI_Connector
 		$basket_file = $user_info["BASKETFILE"];
 		$url = "http://{$this->wnServer}/webnative/plugins/downloadbasket?".$basket_file;
 		$form_data = array(
-			"archName" => "SamsungBasket.zip",
+			"archName" => "PepsiBasket.zip",
 			"archFmt" => "MACZIP",
 			"exportXMP" => "no"
 		);
@@ -1032,7 +1363,7 @@ class PortalDI_Connector
 //		$header = substr($result, 0, $header_size);
 //		$body = substr($result, $header_size);
 //		header("Content-Type: application/x-zip-compressed");
-//		header("Content-Disposition: attachment; filename=SamsungBasket.zip");
+//		header("Content-Disposition: attachment; filename=PepsiBasket.zip");
 //		header("Content-Length: " . strlen($result));
 		print $result;
 */
@@ -1103,17 +1434,10 @@ class PortalDI_Connector
 	
 			$url = "http://{$this->wnServer}/webnative/portalDI?action=search&searchaction=search";
 			$url .= "&maxmatches=".$maxmatches;
-//			$url .= "&selectedvol=".$selectedvol;
 			if($showKeywords) 
 			{
 				$url .= "&showkywds=true";
 			}
-//			$url.="&fileid=".$id;
-//			$url.="&fileid=950";
-//			$url.="&fileid[]=222";
-//			$url.="&path=/Data/Samsung/Master_Assets/Products";
-//			$url.="&path=/Data/Samsung/Master_Assets/Products";
-//			$url.="&treedepth=10";
 			$total_filter_count = 0;
 			$user_filters = array();
 			foreach($filters as $f) {
@@ -1179,7 +1503,14 @@ class PortalDI_Connector
                         	$md_str .= "-F'dbkeyword".$m["id"]."=".($m["value"])."' ";
                         }
                         $cmd = "/usr/bin/curl -F'overwrite=1' -F\"filedata=@$local_filepath\" $md_str -u '".base64_decode($userPass)."' -s '$url'";
-                        exec($cmd);
+                        exec($cmd, $out);
+
+/*
+                        foreach($out as $l) {
+							system("echo '$l' >> /usr/etc/LGS/tmp/upload.log");
+                        }
+
+*/
                         return true;
 
                 }
@@ -1390,6 +1721,7 @@ class PortalDI_Connector
 			}
 
 			$url = "http://{$this->wnServer}/webnative/portalDI?action=fileinfo&path=".$path.$kwds.$version.$history.$custom;
+			//system("echo '$url' >> /usr/etc/LGS/tmp/upload.log");
 			$result = json_decode($this->curlObj->fetch_url($url),true);
 			return $result;
 
@@ -1491,11 +1823,24 @@ class PortalDI_Connector
 
 	public function copyFileId($id,$newPath,$newName,$overwrite=true)
 	{
+		$newPath = rawurlencode(urldecode($newPath));
 		$newName = rawurlencode(urldecode($newName));
 		
 		$overwrite = $overwrite === FALSE ? "false" : "true";
 
 		$url = "http://{$this->wnServer}/webnative/portalDI?fileid={$id}&action=filemgr&filemgraction=copy&newpath={$newPath}&newname={$newName}&overwrite={$overwrite}";
+		$result = json_decode($this->curlObj->fetch_url($url),true);
+		
+		return $result;
+	}
+
+	public function moveFilePath($oldPath,$newPath,$newName,$overwrite=true)
+	{
+		$newName = rawurlencode(urldecode($newName));
+		
+		$overwrite = $overwrite === FALSE ? "false" : "true";
+
+		$url = "http://{$this->wnServer}/webnative/portalDI?filename={$oldPath}&action=filemgr&filemgraction=move&newpath={$newPath}&newname={$newName}&overwrite={$overwrite}";
 		$result = json_decode($this->curlObj->fetch_url($url),true);
 		
 		return $result;

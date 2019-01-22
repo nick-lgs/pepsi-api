@@ -7,6 +7,7 @@
 	$basket_file_name = "Pepsi_Basket.zip";
 
 	$upload_path = "/Data/Pepsi/Production/UK/Agencies/{166}/In Approval/{170}/Uploads";
+	$upload_path = "/Data/Pepsi/Master Assets";
 	$upload_max_size_bytes = 1000000000;
 	
 	$invalid_login_max_attempts = 5;
@@ -15,9 +16,9 @@
 	
 	$invalid_login_email_from = "admin@lgsdemo.co.uk";
 	$invalid_login_email_to = "nick@londongraphicsystems.co.uk";
-	$invalid_login_email_subject = "Invalid Login from Samsung";
+	$invalid_login_email_subject = "Invalid Login from PepsiCo";
 	
-	$lgs_modules_site_name = "SamsungDAM";
+	$lgs_modules_site_name = "PepsiDAM";
 	
 	$restricted_characters = "^ * % # ! &";
 	$invalid_files = "exe zip";
@@ -31,5 +32,7 @@
 	$marketing_asset_keyword_id = "196";
 	
 	$site_primary_colour = "#0066cc";
+	
+	$auto_login_ip = "192.168.98.12";
 
 ?>

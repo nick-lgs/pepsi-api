@@ -1,0 +1,26 @@
+<wip>
+	<paths>
+		<path>
+			<inputpath>/Data/Pepsi/Master</inputpath>
+			<outputpath>/Data/Pepsi/WIP/{203}/{188}/{189}/{191}/{DATE_my}</outputpath>
+		</path>
+	</paths>
+	<fields>
+		<field>
+			<id>203</id>
+			<required>true</required>
+		</field>
+		<field>
+			<id>188</id>
+			<required>true</required>
+		</field>
+		<field>
+			<id>189</id>
+			<required>true</required>
+		</field>
+		<field>
+			<id>191</id>
+			<required>true</required>
+		</field>
+	</fields>
+</wip>

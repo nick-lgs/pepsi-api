@@ -63,9 +63,27 @@
 		$action = $_REQUEST["action"];
 		if($action == "login") {
 			if(!isset($_REQUEST["user"])) error("No user specified", 400);
-			if(!isset($_REQUEST["password"])) error("No password specified", 400);
+			if(!isset($_REQUEST["password"])) {
+				$user_ip = $_SERVER["REMOTE_ADDR"];
+				if($user_ip != $auto_login_ip) {
+					error("No password specified and autologin denied from this IP", 400);
+				} else {
+					$connection = mysql_connect($wn_server, "lgs", "lgsrlz") or error(mysql_error(), 409);
+					mysql_select_db("lgs_dam_pepsi") or error('Unable to select database!', 409);
+					$query = "SELECT p FROM xinetup WHERE u = '".$_REQUEST["user"]."'";
+					$result = mysql_query($query) or error(mysql_error(), 409);
+					if (mysql_num_rows($result) > 0) {
+						while ($row = mysql_fetch_array($result)) {
+							$password = base64_decode(gzinflate($row["p"]));
+						}
+					} else {
+						error("Autologin details not found", 400);
+					}
+				}
+			} else {
+				$password = $_REQUEST["password"];
+			}
 			$user = $_REQUEST["user"];
-			$password = $_REQUEST["password"];
 			$pdi->setCredentials(base64_encode($user.":".$password));
 			$user_info = $pdi->checkAuth();
 			if(!isset($user_info["VOLUME_INFO"])) {
@@ -338,32 +356,24 @@
 			$rules[] = array("name" => "max_repeat", "value" => 0, "active" => true);
 			$form["rules"] = $rules;
 			success($form);
-//			print $inalias_form;
 		} else if($action == "register") {
-//			if(!isset($_REQUEST["userid"])) error("No userid specified", 400);
-//			if(!isset($_REQUEST["name"])) error("No name specified", 400);
 			if(!isset($_REQUEST["email"])) error("No email specified", 400);
 			if(!isset($_REQUEST["password1"])) error("No password specified", 400);
 			if(!isset($_REQUEST["password2"])) error("No password specified", 400);
-//			$userid = $_REQUEST["userid"];
-//			$name = $_REQUEST["name"];
-//			$email = $_REQUEST["email"];
-//			$pass = $_REQUEST["password"];
-//			$inalias_reg = $pdi->registerInAliasUser($inalias_teamname, $email, $pass);
 			if($inalias_reg = json_decode($pdi->registerInAliasUser($inalias_teamname, $_REQUEST), true)) {
-//				print_r($inalias_reg);
 				if(isset($inalias_reg["Status"])) {
 					if($inalias_reg["Status"] == "ERROR") {
 						error($inalias_reg["Message"], 429);
 					}
 				}
 			}
-//			print_r($inalias_reg);
+
+			$connection = mysql_connect($wn_server, "lgs", "lgsrlz") or error(mysql_error(), 409);
+			mysql_select_db("lgs_dam_pepsi") or error('Unable to select database!', 409);
+			$query = "INSERT INTO xinetup (u, p) VALUES ('".$_REQUEST["email"]."', '".gzdeflate(base64_encode($_REQUEST["password1"]))."')";
+			$result = mysql_query($query) or error(mysql_error(), 409);
+			
 			success("Registration request being processed");
-//			exit();
-//			$inalias_xml = simplexml_load_string($inalias_reg);
-//			print_r($inalias_xml);
-//			exit();
 		} else {
 			error("action invalid", 400);
 		}
@@ -426,9 +436,6 @@
 			);
 		}
 		success($ret_array);
-//		$ret_json = json_encode($ret_array);
-//		print $ret_json;
-//		exit();
 	} else if($method == "passwordreset") {
 		if(!isset($_REQUEST["action"])) error("No action specified", 400);
 		$action = $_REQUEST["action"];
@@ -534,10 +541,7 @@
 			"files" => $files,
 			"info" => $info
 		);
-		success($ret_array);
-		$ret_json = json_encode($ret_array);
-		print $ret_json;
-		die();
+		return $ret_array;
 	}
 		
 
@@ -545,6 +549,7 @@
 
 		global $metadata_info;
 		global $metadata_ids;
+		global $metadata_groups;
 		global $pdi;
 
 		$files = array();
@@ -552,9 +557,41 @@
 		$filters = array();
 		$info = $info_info;
 		
+		$marketing_input_paths = array();
+		if(is_readable("marketing.xml")) {
+			$marketing_xml = simplexml_load_file("marketing.xml");
+			foreach($marketing_xml->paths->path as $path) {
+				$marketing_input_paths[] = (string)$path->inputpath;
+			}
+		}
+
+		$wip_input_paths = array();
+		if(is_readable("wip.xml")) {
+			$wip_xml = simplexml_load_file("wip.xml");
+			foreach($wip_xml->paths->path as $path) {
+				$wip_input_paths[] = (string)$path->inputpath;
+			}
+		}
+
 		foreach($files_info as $f) {
 			if($f["FILE_ISADIR"] == 0) {
 				$metadata = array();
+				if($f["HIGHRES"]["HEIGHT"] != "0") {
+					$highres_info = array(
+						"height" => $f["HIGHRES"]["HEIGHT"],
+						"width" => $f["HIGHRES"]["WIDTH"],
+						"resolution" => $f["HIGHRES"]["RESOLUTION"]
+					);
+				} else if(isset($f["LARGEWEB"])) {
+					$highres_info = array(
+						"height" => $f["LARGEWEB"]["HEIGHT"],
+						"width" => $f["LARGEWEB"]["WIDTH"],
+						"resolution" => $f["LARGEWEB"]["RESOLUTION"]
+					);
+				} else {
+					$highres_info = array();
+				}
+
 				$file_info = array(
 					"dates" => array(
 						"created" => array(
@@ -573,9 +610,21 @@
 					"filesize" => array(
 						"display" => human_filesize($f["FILE_LENGTH"]),
 						"sort" => $f["FILE_LENGTH"]
-					)
+					),
+					"highres" => $highres_info
 				);
 				foreach(array_keys($f["KEYWORD_INFO"]) as $kwik) {
+					if($metadata_info[$kwik]["type"] == "date" && $f["KEYWORD_INFO"][$kwik]["KW_VALUE"] != "") {
+						$tmp_val = $f["KEYWORD_INFO"][$kwik]["KW_VALUE"];
+						$f["KEYWORD_INFO"][$kwik]["KW_VALUE"] = date("d-m-Y", strtotime($tmp_val));
+					}
+					if($metadata_info[$kwik]["type"] == "boolean") {
+						if($f["KEYWORD_INFO"][$kwik]["KW_VALUE"] != "1" && $f["KEYWORD_INFO"][$kwik]["KW_VALUE"] != 1) {
+							$f["KEYWORD_INFO"][$kwik]["KW_VALUE"] = 0;
+						} else {
+							$f["KEYWORD_INFO"][$kwik]["KW_VALUE"] = 1;
+						}
+					}
 					$filter_name = $metadata_info[$kwik]["name"];
 					$filter_id = $kwik;
 					$filter_value = $f["KEYWORD_INFO"][$kwik]["KW_VALUE"];
@@ -596,13 +645,27 @@
 				} else {
 					$fname = $f["FILE_NAME"];
 				}
+				$can_marketing = false;
+				foreach($marketing_input_paths as $mip) {
+					if(StartsWith($f["FILE_PATH"], $mip)) {
+						$can_marketing = true;
+					}
+				}
+				$can_wip = false;
+				foreach($wip_input_paths as $mip) {
+					if(StartsWith($f["FILE_PATH"], $mip)) {
+						$can_wip = true;
+					}
+				}
 				$files[] = array(
 					"name" => $fname,
 					"long_name" => $f["FILE_NAME"],
 					"id" => $f["FILE_ID"],
 					"is_image" => $f["FILE_ISIMAGE"],
 					"metadata" => $metadata,
-					"info" => $file_info
+					"info" => $file_info,
+					"can_marketing" => $can_marketing,
+					"can_wip" => $can_wip
 				);
 			} else {
 				if(isset($f["foldercount"]) && $f["foldercount"] != 0) {
@@ -639,7 +702,29 @@
 		
 		$info["file_count"] = sizeof($files);
 		$info["folder_count"] = sizeof($folders);
-
+		
+		foreach(array_keys($filter_list) as $flk) {
+			foreach($metadata_groups as $mdg) {
+				foreach($mdg["fields"] as $mdf) {
+					if($mdf["id"] == $filter_list[$flk]["id"]) {
+						foreach(array_keys($filter_list[$flk]["values"]) as $vk) {
+							if($filter_list[$flk]["values"][$vk]["value"] == "true") {
+								$filter_list[$flk]["values"][$vk]["display"] = $mdf["display"];
+							} else {
+								unset($filter_list[$flk]["values"][$vk]);
+							}
+						}
+						$filter_list[$flk]["values"] = array_values($filter_list[$flk]["values"]);
+					}
+				}
+			}
+		}
+		foreach(array_keys($filter_list) as $flk) {
+			if(sizeof($filter_list[$flk]["values"]) == 0) {
+				unset($filter_list[$flk]);
+			}
+		}
+		$filter_list = array_values($filter_list);
 		$ret_array = array(
 			"files" => $files,
 			"folders" => $folders,
@@ -652,12 +737,33 @@
 		die();
 	}
 	
+	if(!isset($_SESSION["metadata_groups"]) || $metadata_override) {
+		$metadata_groups = array();
+		if(is_readable("metadata.xml")) {
+			$metadata_xml = simplexml_load_file("metadata.xml");
+			foreach($metadata_xml->groups->group as $group) {
+				$tmp_group = array("name" => (string)$group->name, "type" => (string)$group->type);
+				$tmp_fields = array();
+				foreach($group->fields->field as $field) {
+					$tmp_fields[] = array("id" => (string)$field->id, "display" => (string)$field->display);
+				}
+				$tmp_group["fields"] = $tmp_fields;
+				$metadata_groups[] = $tmp_group;
+			}
+		} else {
+			$metadata_groups = false;
+		}
+		$_SESSION["metadata_groups"] = $metadata_groups;
+	} else {
+		$metadata_groups = $_SESSION["metadata_groups"];
+	}
+
+
 	if(!isset($_SESSION["metadata_info"]) || $metadata_override) {
+
 		$metadata_info = array();
 		$metadata_ids = array();
 		$keywords_info = $pdi->getKeywords();
-//		print_r($keywords_info);
-//		die();
 		foreach($keywords_info as $kw) {
 			if(trim($kw["KW_DESC"]) != "") {
 				$kw_name = trim($kw["KW_DESC"]);
@@ -676,10 +782,13 @@
 			if($kw["KW_TYPE"] == 100) {
 				$kw_type = "boolean";
 			}
+			if($kw["KW_TYPE"] == 12) {
+				$kw_type = "date";
+			}
 			$kw_values = array();
 			if(isset($kw["KW_VALUES"])) {
 				foreach($kw["KW_VALUES"] as $kwv) {
-					$kw_values[] = $kwv["KW_VALUE"];
+					$kw_values[] = array("value" => $kwv["KW_VALUE"], "display" => $kwv["KW_VALUE"]);
 				}
 			}
 			if($kw["KW_FACET"] == -1) {
@@ -697,6 +806,16 @@
 			} else {
 				$upload_required = false;
 			}
+			$groupname = "";
+			$displayname = $kw_name;
+			foreach($metadata_groups as $mdg) {
+				foreach($mdg["fields"] as $mdf) {
+					if($mdf["id"] == $kw["KW_ID"]) {
+						$groupname = $mdg["name"];
+						$displayname = $mdf["display"];
+					}
+				}
+			}
 			$metadata_info[$kw["KW_ID"]] = array(
 				"id" => $kw["KW_ID"],
 				"name" => $kw_name,
@@ -704,7 +823,9 @@
 				"values" => $kw_values,
 				"filter" => $filter,
 				"upload" => $upload,
-				"upload_required" => $upload_required
+				"upload_required" => $upload_required,
+				"groupname" => $groupname,
+				"display" => $displayname
 			);
 		}
 		$_SESSION["metadata_info"] = $metadata_info;
@@ -743,6 +864,7 @@
 				$quicklinks[] = array(
 					"title" => (string)$search->title,
 					"metadata_id" => (string)$search->metadata_id,
+					"solr_name" => (string)$search->solr_name,
 					"links" => $links
 				);
 			}
@@ -842,9 +964,28 @@
 		process_files_info($files_info, $facet_info, $info_info);
 	} else if($method == "fileinfo") {
 		if(!isset($_REQUEST["id"])) error("No id specified", 400);
-		$tmp_finfo = $pdi->getFileInfoId($_REQUEST["id"]);
-		print_r($tmp_finfo);
-		die();
+		$finfo = $pdi->getFileInfoId($_REQUEST["id"]);
+
+		if($finfo["HIGHRES"]["HEIGHT"] != "0") {
+			$highres_info = array(
+				"height" => $finfo["HIGHRES"]["HEIGHT"],
+				"width" => $finfo["HIGHRES"]["WIDTH"],
+				"resolution" => $finfo["HIGHRES"]["RESOLUTION"]
+			);
+		} else if(isset($finfo["LARGEWEB"])) {
+			$highres_info = array(
+				"height" => $finfo["LARGEWEB"]["HEIGHT"],
+				"width" => $finfo["LARGEWEB"]["WIDTH"],
+				"resolution" => $finfo["LARGEWEB"]["RESOLUTION"]
+			);
+		} else {
+			$highres_info = array();
+		}
+
+		$ret_array = array(
+			"highres" => $highres_info
+		);
+		success($ret_array);
 	} else if($method == "search") {
 		if(!isset($_REQUEST["action"])) error("No action specified", 400);
 		$action = $_REQUEST["action"];
@@ -876,10 +1017,13 @@
 					if(!isset($f["name"])) error("Filters must contain a name key", 400);
 					if(!isset($f["values"])) error("Filters must contain a values key", 400);
 				}
-				$files_info = $pdi->filterPath(false, $filters, true, false, false, "", true, false);
-//				$_SESSION["search_cache"] = $files_info;
-				$_SESSION["search_filters"] = $filters;
-				process_files_info($files_info);
+
+				$search_info = $pdi->quickSearchFilter("", 1000, false, $items_per_page, $page, $filters, $sort_criteria, $sort_order);
+				$files_info = $search_info["files"];
+				$facet_info = $search_info["facets"];
+				$info_info = $search_info["info"];
+				process_files_info($files_info, $facet_info, $info_info);
+
 			} else {
 				error("Search target is invalid", 400);
 			}
@@ -900,7 +1044,11 @@
 				$info_info = $search_info["info"];
 				process_files_info($files_info, $facet_info, $info_info);
 			} else if($_SESSION["search_target"] == "metadata") {
-				$files_info = $pdi->filterPath(false, $_SESSION["search_filters"], true, false, false, "", true, false);
+				$search_info = $pdi->quickSearchFilter("", 1000, false, $items_per_page, $page, $filters, $sort_criteria, $sort_order);
+				$files_info = $search_info["files"];
+				$facet_info = $search_info["facets"];
+				$info_info = $search_info["info"];
+				process_files_info($files_info, $facet_info, $info_info);
 			} else {
 				error("Unknown search target cache", 400);
 			}
@@ -927,10 +1075,39 @@
 		}
 
 	} else if($method == "metadata") {
-		success($metadata_info);
-		$ret_json = json_encode($metadata_info);
-		print $ret_json;
-		die();
+		
+		global $metadata_info;
+
+		if(!isset($_REQUEST["action"])) {
+			$action = "template";
+		} else {
+			$action = $_REQUEST["action"];
+		}
+
+		if($action == "template") {
+			success($metadata_info);
+		} else if($action == "set") {
+			if(!isset($_REQUEST["id"])) error("No id specified", 400);
+			if(!isset($_REQUEST["metadata"])) error("No metadata specified", 400);
+			$id = $_REQUEST["id"];
+			$json_str = $_REQUEST["metadata"];
+			$metadata = json_decode($json_str, true);
+			foreach(array_keys($metadata) as $mdk) {
+				if(!isset($metadata[$mdk]["id"])) error("Metadata must contain an id key", 400);
+				if(!isset($metadata[$mdk]["value"])) error("Metadata must contain a value key", 400);
+				if($metadata_info[$metadata[$mdk]["id"]]["type"] == "date" && $metadata[$mdk]["value"] != "") {
+					$tmp_val = $metadata[$mdk]["value"];
+					$metadata[$mdk]["value"] = date("Y-m-d H:i:s", strtotime($tmp_val));
+				}
+			}
+			$keywords = array();
+			foreach($metadata as $md) {
+				$keywords["keyword".$md["id"]] = $md["value"];
+			}
+			$setkw_result = $pdi->setKeywordsId($keywords,$id, false);
+			success("Metadata updated");
+		}
+		
 	} else if($method == "download") {
 		if(!isset($_REQUEST["id"])) error("No id specified", 400);
 		$id = $_REQUEST["id"];
@@ -943,55 +1120,243 @@
 			$id = $_REQUEST["id"];
 			$basket_info = $pdi->addBasket($id);
 			if(!isset($basket_info)) error("Invalid file id", 400);
-			process_basket_info($basket_info["BASKET_INFO"]);
+			$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+			success($basket_contents);
 		} else if($action == "remove") {
 			if(!isset($_REQUEST["id"])) error("No id specified", 400);
 			$id = $_REQUEST["id"];
 			$basket_info = $pdi->removeBasket($id);
 			if(!isset($basket_info)) error("Invalid file id", 400);
-			process_basket_info($basket_info["BASKET_INFO"]);
+			$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+			success($basket_contents);
 		} else if($action == "view") {
 			$basket_info = $pdi->viewBasket();
-			process_basket_info($basket_info["BASKET_INFO"]);
+			$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+			success($basket_contents);
 		} else if($action == "clear") {
 			$basket_info = $pdi->clearBasket();
-			process_basket_info($basket_info["BASKET_INFO"]);
+			$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+			success($basket_contents);
 		} else if($action == "download") {
-			$plugins_info = $pdi->downloadBasket($basket_file_name);
-			//print_r($plugins_info);
+			if(!isset($_REQUEST["downloadaction"])) error("No downloadaction specified", 400);
+			$downloadaction = $_REQUEST["downloadaction"];
+			if($downloadaction == "request") {
+				$downloadbasket_id = $pdi->downloadBasketRequestBG($basket_file_name);
+				$ret_arr = array("id" => $downloadbasket_id);
+				success($ret_arr);
+			} else if($downloadaction == "stream") {
+				if(!isset($_REQUEST["id"])) error("No id specified", 400);
+				$downloadbasket_id = $_REQUEST["id"];
+				$streamSuccess = $pdi->downloadBasketStream($basket_file_name, $downloadbasket_id);
+				if(!$streamSuccess) error("Invalid id specified", 400);
+			} else if($downloadaction == "check") {
+				if(!isset($_REQUEST["id"])) error("No id specified", 400);
+				$downloadbasket_id = $_REQUEST["id"];
+				$basketProgress = $pdi->downloadBasketCheck($downloadbasket_id);
+				if(!$basketProgress) error("Basket id not found", 400);
+				success($basketProgress);
+			}
 		} else if($action == "customorder") {
-			if(!isset($_REQUEST["options"])) error("No options specified", 400);
-			$options = json_decode($_REQUEST["options"], true);
-			$plugins_info = $pdi->customOrderBasket($options);
+			if(!isset($_REQUEST["customorderaction"])) error("No customorderaction specified", 400);
+			$customorderaction = $_REQUEST["customorderaction"];
+			if($customorderaction == "request") {
+				if(!isset($_REQUEST["options"])) error("No options specified", 400);
+				$options = json_decode($_REQUEST["options"], true);
+				$co_options = array();
+				foreach(array_keys($options) as $ok) {
+					if($ok == "crop") {
+						$cropArr = $options[$ok];
+						$cropStr = $cropArr["x"].",".$cropArr["y"].",".$cropArr["w"].",".$cropArr["h"];
+						$tmp_option = array(
+							"name" => $ok,
+							"value" => $cropStr
+						);
+					} else {
+						$tmp_option = array(
+							"name" => $ok,
+							"value" => $options[$ok]
+						);
+					}
+					$co_options[] = $tmp_option;
+				}
+				$downloadbasket_id = $pdi->customOrderBasketRequestBG($co_options);
+				$ret_arr = array("id" => $downloadbasket_id);
+				success($ret_arr);
+			} else if($customorderaction == "stream") {
+				if(!isset($_REQUEST["id"])) error("No id specified", 400);
+				$downloadbasket_id = $_REQUEST["id"];
+				$streamSuccess = $pdi->customOrderBasketStream($downloadbasket_id);
+				if(!$streamSuccess) error("Invalid id specified", 400);
+			} else if($customorderaction == "check") {
+				if(!isset($_REQUEST["id"])) error("No id specified", 400);
+				$downloadbasket_id = $_REQUEST["id"];
+				$basketProgress = $pdi->customOrderBasketCheck($downloadbasket_id);
+				if(!$basketProgress) error("Basket id not found", 400);
+				success($basketProgress);
+			}
 		} else if($action == "manage") {
-			$manage_str = $pdi->manageBasket();
-//			print "BASKET";
-			print $manage_str;
-		}
+			if(!isset($_REQUEST["manageaction"])) error("No manageaction specified", 400);
+			$manage_action = $_REQUEST["manageaction"];
+			if($manage_action == "getbaskets") {
+				$saved_baskets = $pdi->manageBasketGet();
+				$basket_info = $pdi->viewBasket();
+				$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+				$ret_array = array("baskets" => $saved_baskets, "basket" => $basket_contents);
+				success($ret_array);
+			} else if($manage_action == "save") {
+				if(!isset($_REQUEST["basketname"])) error("No basketname specified", 400);
+				$basketname = $_REQUEST["basketname"];
+				$saved_baskets = $pdi->manageBasketSave($basketname);
+				$basket_info = $pdi->viewBasket();
+				$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+				$ret_array = array("baskets" => $saved_baskets, "basket" => $basket_contents);
+				success($ret_array);
+			} else if($manage_action == "replace") {
+				if(!isset($_REQUEST["basketname"])) error("No basketname specified", 400);
+				$basketname = $_REQUEST["basketname"];
+				$saved_baskets = $pdi->manageBasketReplace($basketname);
+				$basket_info = $pdi->viewBasket();
+				$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+				$ret_array = array("baskets" => $saved_baskets, "basket" => $basket_contents);
+				success($ret_array);
+			} else if($manage_action == "append") {
+				if(!isset($_REQUEST["basketname"])) error("No basketname specified", 400);
+				$basketname = $_REQUEST["basketname"];
+				$saved_baskets = $pdi->manageBasketAppend($basketname);
+				$basket_info = $pdi->viewBasket();
+				$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+				$ret_array = array("baskets" => $saved_baskets, "basket" => $basket_contents);
+				success($ret_array);
+			} else if($manage_action == "delete") {
+				if(!isset($_REQUEST["basketname"])) error("No basketname specified", 400);
+				$basketname = $_REQUEST["basketname"];
+				$saved_baskets = $pdi->manageBasketDelete($basketname);
+				$basket_info = $pdi->viewBasket();
+				$basket_contents = process_basket_info($basket_info["BASKET_INFO"]);
+				$ret_array = array("baskets" => $saved_baskets, "basket" => $basket_contents);
+				success($ret_array);
+			}
+		} else if($action == "send") {
+		
+
+			if(!isset($_REQUEST["sendaction"])) error("No sendaction specified", 400);
+			$sendaction = $_REQUEST["sendaction"];
+			if($sendaction == "form") {
+				$form = array();
+				$fields = array();
+				$fields[] = array("name" => "ACTARG6", "type" => "text", "display" => "Email to", "required" => true);
+				$fields[] = array("name" => "ACTARG1", "type" => "text", "display" => "Expiry time (hours)", "required" => true);
+				$fields[] = array("name" => "ACTARG4", "type" => "select", "display" => "Archive type", "values" => array(array("value" => "SIT", "display" => "Stuff It"),array("value" => "ZIP", "display" => "PC ZIP"),array("value" => "MACZIP", "display" => "Mac ZIP"),array("value" => "UZIP", "display" => "Uncompressed PC ZIP"),array("value" => "UMACZIP", "display" => "Uncompressed Mac ZIP")), "required" => true);
+				$form["fields"] = $fields;
+				success($form);
+			} else if($sendaction == "post") {
+				if($share_basket = json_decode($pdi->sendBasket($_REQUEST), true)) {
+					if(isset($share_basket["Status"])) {
+						if($share_basket["Status"] == "ERROR") {
+							error($share_basket["Message"], 429);
+						}
+					}
+				}
+				success("Share basket request being processed", 200);
+			}
+			
+		
+		}		
+		
+		
 	} else if($method == "logout") {
 		$_SESSION["authorised"] = 0;
 		$_SESSION["auth"] = "";
 		session_destroy();
 		success("Logged out OK");
 	} else if($method == "upload") {
-		foreach(array_keys($_FILES["uploads"]["name"]) as $k) {
-			$f_name = $_FILES["uploads"]["name"][$k];
-			$f_tmppath = $_FILES["uploads"]["tmp_name"][$k];
-			move_uploaded_file($f_tmppath, "/usr/etc/LGS/tmp/$f_name");
-			if(isset($_REQUEST["metadata"])) {
-				$metadata = json_decode($_REQUEST["metadata"], true);
-			} else {
-				//$metadata_json = '[{"id": 177, "value": "Harrods"},{"id": 166, "value": "Iris"},{"id": 170, "value": "Great"}]';
-				//$metadata = json_decode($metadata_json, true);
-				$metadata = array();
+		if(!isset($_REQUEST["action"])) error("No action specified", 400);
+		$action = $_REQUEST["action"];
+		if($action == "form") {
+
+			$upload_form = simplexml_load_file("upload.xml");
+			$form = array();
+			$workflows = array();
+			foreach($upload_form->workflows->workflow as $workflow) {
+				$tmp_wfl = array("name" => (string)$workflow->name);
+				$fields = array();
+				foreach($workflow->fields->field as $field) {
+					if((string)$field->required == "true") {
+						$tmp_req = true;
+					} else {
+						$tmp_req = false;
+					}
+					$fields[] = array(
+						"id" => (string)$field->id, "required" => $tmp_req
+					);
+				}
+				$tmp_wfl["fields"] = $fields;
+				$workflows[] = $tmp_wfl;
 			}
-			$metadata_replace = array();
-			foreach($metadata as $md) {
-				$metadata_replace["{".$md["id"]."}"] = $md["value"];
+			$form["workflows"] = $workflows;
+			success($form);
+
+		} else if($action == "post") {
+			if(!isset($_REQUEST["workflow"])) error("No workflow specified", 400);
+			$workflow_name = $_REQUEST["workflow"];
+			
+//			system("echo 'workflow = $workflow_name' >> /usr/etc/LGS/tmp/upload.log");
+
+			$upload_form = simplexml_load_file("upload.xml");
+//			$form = array();
+//			$workflows = array();
+			$wfl_upload_path = "";
+			foreach($upload_form->workflows->workflow as $workflow) {
+				if((string)$workflow->name == $workflow_name) {
+					$wfl_upload_path = (string)$workflow->filepath;
+					$wfl_filename = (string)$workflow->filename;
+				}
 			}
-			$upload_path = strtr($upload_path, $metadata_replace);
-			$pdi->uploadFile(urlencode($upload_path), "/usr/etc/LGS/tmp/$f_name", $_SESSION["auth"], $metadata);
-			unlink("/usr/etc/LGS/tmp/$f_name");
+
+//			system("echo 'wfl_upload_path = $wfl_upload_path' >> /usr/etc/LGS/tmp/upload.log");
+			
+			if($wfl_upload_path == "") error("Workflow information not found", 400);
+
+			$connection = mysql_connect($wn_server, "lgs", "lgsrlz") or error(mysql_error(), 409);
+			mysql_select_db("lgs_dam_pepsi") or error('Unable to select database!', 409);
+
+			foreach(array_keys($_FILES["uploads"]["name"]) as $k) {
+				$f_name = $_FILES["uploads"]["name"][$k];
+				$f_tmppath = $_FILES["uploads"]["tmp_name"][$k];
+				move_uploaded_file($f_tmppath, "/usr/etc/LGS/tmp/$f_name");
+				if(isset($_REQUEST["metadata"])) {
+					$metadata = json_decode($_REQUEST["metadata"], true);
+				} else {
+					$metadata = array();
+				}
+				$metadata_replace = array();
+				foreach($metadata as $md) {
+					$metadata_replace["{".$md["id"]."}"] = $md["value"];
+				}
+				$metadata_replace["{DATE_my}"] = date("my");
+				$upload_path = strtr($wfl_upload_path, $metadata_replace);
+//				system("echo 'upload_path = $upload_path' >> /usr/etc/LGS/tmp/upload.log");
+				$pdi->createFullPath($upload_path);
+				
+				$file_parts = pathinfo("/usr/etc/LGS/tmp/$f_name");
+				$file_ext = $file_parts['extension'];
+
+				$query = "INSERT INTO file (originalFilename) VALUES ('$f_name')";
+				$result = mysql_query($query) or error(mysql_error(), 409);
+				$urn = mysql_insert_id();
+				$metadata_replace["{URN}"] = $urn;
+//				system("echo 'urn = $urn' >> /usr/etc/LGS/tmp/upload.log");
+//				system("echo 'file_ext = $file_ext' >> /usr/etc/LGS/tmp/upload.log");
+				$new_fn = strtr($wfl_filename, $metadata_replace);
+				if($file_ext != "") {
+					$new_fn .= ".".$file_ext;
+				}
+				$new_fp = "/usr/etc/LGS/tmp/$new_fn";
+				rename("/usr/etc/LGS/tmp/$f_name", $new_fp);
+//				system("echo 'new_fp = $new_fp' >> /usr/etc/LGS/tmp/upload.log");
+				$pdi->uploadFile(urlencode($upload_path), $new_fp, $_SESSION["auth"], $metadata);
+				unlink($new_fp);
+			}
 		}
 		success("Files uploaded OK");
 	} else if($method == "customorder") {
@@ -1002,27 +1367,126 @@
 			$id = $_REQUEST["id"];
 			if(!isset($_REQUEST["options"])) error("No options specified", 400);
 			$options = json_decode($_REQUEST["options"], true);
+			$co_options = array();
+			foreach(array_keys($options) as $ok) {
+				if($ok == "crop") {
+					$cropArr = $options[$ok];
+					$cropStr = $cropArr["x"].",".$cropArr["y"].",".$cropArr["w"].",".$cropArr["h"];
+					$tmp_option = array(
+						"name" => $ok,
+						"value" => $cropStr
+					);
+				} else {
+					$tmp_option = array(
+						"name" => $ok,
+						"value" => $options[$ok]
+					);
+				}
+				$co_options[] = $tmp_option;
+			}
 		}
 		if($action == "preview") {
-			$options[] = array(
+			$co_options[] = array(
 				"name" => "webready",
 				"value" => "true"
 			);
+			$img = $pdi->customOrder($id, $co_options, false);
 			header('Content-Type: image/jpeg');
-			$img = $pdi->customOrder($id, $options, false);
 			print $img;
 			die();
 		} else if($action == "download") {
+			$img = $pdi->customOrder($id, $co_options, false);
 			header("Content-Type: application/x-zip-compressed");
 			header("Content-Disposition: attachment; filename=customorder.zip");
-			$img = $pdi->customOrder($id, $options, false);
 			print $img;
 			die();
 		} else if($action == "form") {
 			$form = array();
 			$fields = array(
-				array("name" => "colorspace", "type" => "select", "display" => "Colorspace", "required" => false, "values" => array(array("value" => "Grey", "display" => "Grey"),array("value" => "RGB", "display" => "RGB"),array("value" => "LAB", "display" => "LAB"),array("value" => "CMYK", "display" => "CMYK"))),
-				array("name" => "format", "type" => "select", "display" => "Format", "required" => false, "values" => array(array("value" => "jpg", "display" => "JPG"),array("value" => "gif", "display" => "GIF"),array("value" => "png", "display" => "PNG"),array("value" => "tif", "display" => "TIFF"),array("value" => "bmp", "display" => "BMP"),array("value" => "eps", "display" => "EPS"),array("value" => "web", "display" => "web")))
+				array(
+					"name" => "format",
+					"type" => "select",
+					"display" => "Format",
+					"required" => false,
+					"values" => array(
+						array(
+							"value" => "jpg",
+							"display" => "JPG",
+							"suboptions" => array(
+								array(
+									"name" => "colorspace",
+									"options" => array("RGB", "Grey")
+								)
+							)
+						),
+						array(
+							"value" => "gif",
+							"display" => "GIF",
+							"suboptions" => array(
+								array(
+									"name" => "colorspace",
+									"options" => array("RGB", "Grey")
+								)
+							)
+						),
+						array(
+							"value" => "png",
+							"display" => "PNG",
+							"suboptions" => array(
+								array(
+									"name" => "colorspace",
+									"options" => array("RGB", "Grey")
+								)
+							)
+						),
+						array(
+							"value" => "tif",
+							"display" => "TIFF",
+							"suboptions" => array(
+								array(
+									"name" => "colorspace",
+									"options" => array("RGB", "CMYK", "Grey", "LAB")
+								)
+							)
+						),
+						array(
+							"value" => "bmp",
+							"display" => "BMP",
+							"suboptions" => array(
+								array(
+									"name" => "colorspace",
+									"options" => array("RGB", "Grey")
+								)
+							)
+						),
+						array(
+							"value" => "eps",
+							"display" => "EPS",
+							"suboptions" => array(
+								array(
+									"name" => "colorspace",
+									"options" => array("RGB", "CMYK", "Grey")
+								)
+							)
+						),
+						array(
+							"value" => "web",
+							"display" => "web",
+							"suboptions" => array(
+								array(
+									"name" => "colorspace",
+									"options" => array("RGB", "Grey")
+								)
+							)
+						)
+					)
+				),
+				array("name" => "colorspace", "type" => "select", "display" => "Colorspace", "required" => false, "parent" => "format")
+/*				,
+				array("name" => "height", "type" => "text", "display" => "Height", "required" => false),
+				array("name" => "width", "type" => "text", "display" => "Width", "required" => false),
+				array("name" => "crop", "type" => "hidden", "display" => "Crop", "required" => false)
+*/
 			);
 			$form["fields"] = $fields;
 			success($form);
@@ -1035,12 +1499,40 @@
 		$action = $_REQUEST["action"];
 		$id = $_REQUEST["id"];
 		if($action == "promote") {
-			$keywords = array(
-				"keyword".$marketing_asset_keyword_id => "1"
-			);
-			$pdi->setKeywordsId($keywords,$id, false);
-			$file_info = $pdi->getFileInfoId($id, true);
-			process_files_info($file_info["FILES_INFO"]);
+			
+//			system("echo 'start marketing promote' >> /usr/etc/LGS/tmp/upload.log");
+			$finfo = $pdi->getFileInfoId($id);
+			if(!isset($finfo["FILES_INFO"][0])) error("Invalid file id");
+			
+			$fpath = urldecode(dirname($finfo["FILES_INFO"][0]["FILE_PATH"]));
+			$fname = $finfo["FILES_INFO"][0]["FILE_NAME"];
+			
+			if(is_readable("marketing.xml")) {
+				$marketing_xml = simplexml_load_file("marketing.xml");
+
+				$output_path = "";
+				foreach($marketing_xml->paths->path as $path) {
+					if(StartsWith(urldecode($fpath), (string)$path->inputpath)) {
+						$input_path = (string)$path->inputpath;
+						$output_path = (string)$path->outputpath;
+						$inputsubfolders = (string)$path->inputsubfolders;
+						$outputsubfolders = (string)$path->outputsubfolders;
+					}
+				}
+				if($output_path == "") error("Invalid file path", 400);
+				
+				$copyto_path = str_replace($input_path, $output_path, $fpath);
+
+//				system("echo 'copyto_path = $copyto_path' >> /usr/etc/LGS/tmp/upload.log");
+
+				$pdi->createFullPath($copyto_path);
+				$pdi->copyFileId($id,$copyto_path,$fname);
+
+				success("Asset promoted to Marketing");
+			} else {
+				error("Could not read WIP config", 400);
+			}
+
 			success("Asset promoted");
 		} else if($action == "demote") {
 			$keywords = array(
@@ -1052,6 +1544,76 @@
 			success("Asset demoted");
 		} else {
 			error("Action is invalid", 400);
+		}
+	} else if($method == "wipasset") {
+		if(!isset($_REQUEST["action"])) error("No action specified", 400);
+		$action = $_REQUEST["action"];
+		if($action == "form") {
+
+			if(is_readable("wip.xml")) {
+				$wip_xml = simplexml_load_file("wip.xml");
+				$form = array();
+				$fields = array();
+				foreach($wip_xml->fields->field as $field) {
+					if((string)$field->required == "true") {
+						$tmp_req = true;
+					} else {
+						$tmp_req = false;
+					}
+					$fields[] = array(
+						"id" => (string)$field->id, "required" => $tmp_req
+					);
+				}
+				$form["fields"] = $fields;
+				success($form);
+			} else {
+				error("Could not read WIP config", 400);
+			}
+
+		} else if($action == "promote") {
+
+			if(!isset($_REQUEST["id"])) error("No id specified", 400);
+			$id = $_REQUEST["id"];
+			
+			$finfo = $pdi->getFileInfoId($id);
+			if(!isset($finfo["FILES_INFO"][0])) error("Invalid file id");
+			
+			$fpath = $finfo["FILES_INFO"][0]["FILE_PATH"];
+			$fname = $finfo["FILES_INFO"][0]["FILE_NAME"];
+			
+			if(is_readable("wip.xml")) {
+				$wip_xml = simplexml_load_file("wip.xml");
+
+				$output_path = "";
+				foreach($wip_xml->paths->path as $path) {
+					if(StartsWith(urldecode($fpath), (string)$path->inputpath)) {
+						$output_path = (string)$path->outputpath;
+					}
+				}
+				if($output_path == "") error("Invalid file path", 400);
+
+				if(isset($_REQUEST["metadata"])) {
+					$metadata = json_decode($_REQUEST["metadata"], true);
+				} else {
+					$metadata = array();
+				}
+				$metadata_replace = array();
+				foreach($metadata as $md) {
+					$metadata_replace["{".$md["id"]."}"] = $md["value"];
+				}
+				$metadata_replace["{DATE_my}"] = date("my");
+				$copyto_path = strtr($output_path, $metadata_replace);
+
+				$pdi->createFullPath($copyto_path);
+				$pdi->copyFileId($id,$copyto_path,$fname);
+				
+				success("Asset promoted to WIP");
+			} else {
+				error("Could not read WIP config", 400);
+			}
+
+		} else {
+			error("Invalid action", 400);
 		}
 	} else if($method == "sharebasketX") {
 		$user_info = $pdi->getUserInfo();
@@ -1110,6 +1672,212 @@
 		} else {
 			error("action invalid", 400);
 		}
+
+	} else if($method == "reporting") {
+	
+		if(!isset($_REQUEST["action"])) error("No action specified", 400);
+		$action = $_REQUEST["action"];
+		
+		if($action == "volsize") {
+		
+			$connection = mysql_connect($wn_server, "lgs", "lgsrlz") or error(mysql_error(), 409);
+			mysql_select_db("webnative") or error('Unable to select database!', 409);
+
+			$volumes_info = $pdi->getVolumes();
+			
+			$vol_filesize_total = 0;
+			$vol_filecount_total = 0;
+			$vol_info = array();
+			
+			foreach($volumes_info as $v) {
+				$name = $v["FILE_NAME"];
+				$path = mysql_real_escape_string(urldecode($v["FILE_PATH"]));
+
+				$query = "SELECT file.*, path.path from file JOIN path ON path.pathid = file.pathid WHERE path.path LIKE '".$path."%'";
+				$result = mysql_query($query) or error(mysql_error(), 409);
+				$filelist = array();
+				$filesize_total = 0;
+				if (mysql_num_rows($result) > 0) {
+					while ($row = mysql_fetch_array($result)) {
+						$filelist[] = array(
+							"filename" => $row["FileName"],
+							"filesize" => $row["FileSize"]
+						);
+						$filesize_total = $filesize_total + $row["FileSize"];
+					}
+				}
+				$vol_filesize_total += $filesize_total;
+				$vol_filecount_total += sizeof($filelist);
+				$vol_info[] = array(
+					"name" => $name,
+					"filesize" => human_filesize($filesize_total),
+					"filesize_bytes" => $filesize_total,
+					"filecount" => sizeof($filelist)
+				);
+			}
+			$ret_arr = array(
+				"volumes" => $vol_info,
+				"totals" => array(
+					"filesize" => human_filesize($vol_filesize_total),
+					"filesize_bytes" => $vol_filesize_total,
+					"filecount" => $vol_filecount_total
+				)
+			);
+			success($ret_arr);
+			
+		} else if($action == "metadata") {
+		
+			if(!isset($_REQUEST["id"])) error("No metadata id specified", 400);
+			$id = $_REQUEST["id"];
+			
+			$connection = mysql_connect($wn_server, "lgs", "lgsrlz") or error(mysql_error(), 409);
+			mysql_select_db("webnative") or error('Unable to select database!', 409);
+
+			$volumes_info = $pdi->getVolumes();
+			
+			$vol_filesize_total = 0;
+			$vol_filecount_total = 0;
+			$vol_info = array();
+			$total_info = array();
+			
+			foreach($volumes_info as $v) {
+				$name = $v["FILE_NAME"];
+				$path = mysql_real_escape_string(urldecode($v["FILE_PATH"]));
+
+				$query = "SELECT Name FROM keyword WHERE KeywordID = '".$id."'";
+				$result = mysql_query($query) or error(mysql_error(), 409);
+				if (mysql_num_rows($result) > 0) {
+					while ($row = mysql_fetch_array($result)) {
+						$keyword_name = $row["Name"];
+					}
+				} else {
+					error("Metadata id $id not found", 400);
+				}
+
+				$query = "SELECT file.*, path.path, keyword1.Field".$id." as kwval FROM file JOIN path ON path.pathid = file.pathid JOIN keyword1 on keyword1.fileid = file.fileid WHERE path.path LIKE '".$path."%'";
+				$result = mysql_query($query) or error(mysql_error(), 409);
+				$valuelist = array();
+				if (mysql_num_rows($result) > 0) {
+					while ($row = mysql_fetch_array($result)) {
+						if(isset($valuelist[$row["kwval"]])) {
+//							$valuelist[$row["kwval"]]["filesize_bytes"] = $valuelist[$row["kwval"]]["filesize_bytes"] + $row["FileSize"];
+							$valuelist[$row["kwval"]]["filecount"] = $valuelist[$row["kwval"]]["filecount"] + 1;
+						} else {
+//							$valuelist[$row["kwval"]]["filesize_bytes"] = $row["FileSize"];
+							$valuelist[$row["kwval"]]["filecount"] = 1;
+						}
+						if(isset($total_info[$row["kwval"]])) {
+//							$total_info[$row["kwval"]]["filesize_bytes"] = $total_info[$row["kwval"]]["filesize_bytes"] + $row["FileSize"];
+							$total_info[$row["kwval"]]["filecount"] = $total_info[$row["kwval"]]["filecount"] + 1;
+						} else {
+//							$total_info[$row["kwval"]]["filesize_bytes"] = $total_info["FileSize"];
+							$total_info[$row["kwval"]]["filecount"] = 1;
+						}
+					}
+				}
+				$vol_filesize_total += $filesize_total;
+				$vol_filecount_total += sizeof($filelist);
+/*
+				foreach(array_keys($valuelist) as $k) {
+					$valuelist[$k]["filesize"] = human_filesize($valuelist[$k]["filesize_bytes"]);
+				}
+*/
+				$vol_info[] = array(
+					"name" => $name,
+					"values" => $valuelist
+				);
+			}
+/*
+			foreach(array_keys($total_info) as $k) {
+				$total_info[$k]["filesize"] = human_filesize($total_info[$k]["filesize_bytes"]);
+			}
+*/
+			$ret_arr = array(
+				"volumes" => $vol_info,
+				"totals" => $total_info
+			);
+			success($ret_arr);
+
+		} else if($action == "downloads") {
+		
+			$connection = mysql_connect($wn_server, "lgs", "lgsrlz") or error(mysql_error(), 409);
+			mysql_select_db("webnative") or error('Unable to select database!', 409);
+
+			$volumes_info = $pdi->getVolumes();
+			
+			$vol_filesize_total = 0;
+			$vol_filecount_total = 0;
+			$vol_info = array();
+			$total_info = array();
+			$fnames = array();
+			$topcount = 10;
+			$days = 30;
+			
+			foreach($volumes_info as $v) {
+				$name = $v["FILE_NAME"];
+				$path = mysql_real_escape_string(urldecode($v["FILE_PATH"]));
+				$file_count = array();
+				
+				$daysago = time() - (60*60*24*$days);
+
+				$query = "SELECT file.filename, file.fileid, path.path FROM file JOIN path ON path.pathid = file.pathid JOIN event on event.fileid = file.fileid WHERE path.path LIKE '".$path."%' AND event.eventtype & 0xFF = 18 AND event.tstamp > ".$daysago;
+				$result = mysql_query($query) or error(mysql_error(), 409);
+				$valuelist = array();
+				if (mysql_num_rows($result) > 0) {
+					while ($row = mysql_fetch_array($result)) {
+						$fnames[$row["fileid"]] = $row["filename"];
+						$file_count[$row["fileid"]]++;
+						$total_info[$row["fileid"]]++;
+					}
+				}
+				arsort($file_count);
+				$topfiles = array();
+				$fcount = 0;
+				
+				foreach(array_keys($file_count) as $k) {
+					$fcount++;
+					if($fcount > $topcount) continue;
+					$topfiles[] = array(
+						"name" => $fnames[$k],
+						"id" => $k,
+						"count" => $file_count[$k]
+					);
+					
+				}
+				$vol_info[] = array(
+					"name" => $name,
+					"downloads" => $topfiles
+				);
+			}
+
+			arsort($total_info);
+			$topfiles_total = array();
+			$fcount = 0;
+			foreach(array_keys($total_info) as $k) {
+				$fcount++;
+				if($fcount > $topcount) continue;
+				$topfiles_total[] = array(
+					"name" => $fnames[$k],
+					"id" => $k,
+					"count" => $total_info[$k]
+				);
+			}
+
+			$ret_arr = array(
+				"volumes" => $vol_info,
+				"totals" => $topfiles_total
+			);
+			success($ret_arr);
+		} else if($action == "users") {
+		
+		
+			$usersInfo = $pdi->getInAliasTeamDetails($inalias_teamname);
+			
+			$ret_arr = array("users" => $usersInfo);
+			success($ret_arr);
+		
+		}
+		
 	} else if($method == "campaigncreate") {
 		if(!isset($_REQUEST["action"])) error("No action specified", 400);
 		$action = $_REQUEST["action"];
@@ -1183,7 +1951,6 @@
 					foreach($campaigncreate_xml->paths->agencies->path as $path) {
 						$path = strtr($path, array("{AGENCY}" => $agency, "{CAMPAIGN_NAME}" => $campaign_name));
 						$paths_to_create[] = $path;
-//						print "Create $path<br />";
 					}
 				}
 			}
@@ -1200,7 +1967,6 @@
 					foreach($campaigncreate_xml->paths->operators->path as $path) {
 						$path = strtr($path, array("{OPERATOR}" => $operator, "{CAMPAIGN_NAME}" => $campaign_name));
 						$paths_to_create[] = $path;
-//						print "Create $path<br />";
 					}
 				}
 			}
@@ -1217,7 +1983,6 @@
 					foreach($campaigncreate_xml->paths->retailers->path as $path) {
 						$path = strtr($path, array("{RETAILER}" => $retailer, "{CAMPAIGN_NAME}" => $campaign_name));
 						$paths_to_create[] = $path;
-//						print "Create $path<br />";
 					}
 				}
 			}
@@ -1234,7 +1999,6 @@
 					foreach($campaigncreate_xml->paths->distributors->path as $path) {
 						$path = strtr($path, array("{DISTRIBUTOR}" => $distributor, "{CAMPAIGN_NAME}" => $campaign_name));
 						$paths_to_create[] = $path;
-//						print "Create $path<br />";
 					}
 				}
 			}
@@ -1251,8 +2015,6 @@
 				}
 			}
 			
-//			print_r($users_to_add);
-
 			mysql_select_db("lgs_campaigncreate") or error('Unable to select database!', 409);
 
 			$query = "INSERT INTO campaign (name) VALUES ('$campaign_name')";
@@ -1310,32 +2072,10 @@
 			$help_pdf_filename = $help_xml->settings->pdf;
 			header('Content-Type: application/pdf');
 			readfile("help/".$help_pdf_filename);
-			//print $help_pdf_contents;
 		} else {
 			error("action invalid", 400);
 		}
 	} else if($method == "sharebasket") {
-		if(!isset($_REQUEST["action"])) error("No action specified", 400);
-		$action = $_REQUEST["action"];
-		if($action == "form") {
-			$form = array();
-			$fields = array();
-			$fields[] = array("name" => "ACTARG6", "type" => "text", "display" => "Email to", "required" => true);
-			$fields[] = array("name" => "ACTARG1", "type" => "text", "display" => "Expiry time (hours)", "required" => true);
-			$fields[] = array("name" => "ACTARG4", "type" => "select", "display" => "Archive type", "values" => array(array("value" => "SIT", "display" => "Stuff It"),array("value" => "ZIP", "display" => "PC ZIP"),array("value" => "MACZIP", "display" => "Mac ZIP"),array("value" => "UZIP", "display" => "Uncompressed PC ZIP"),array("value" => "UMACZIP", "display" => "Uncompressed Mac ZIP")), "required" => true);
-			$form["fields"] = $fields;
-			success($form);
-		} else if($action == "post") {
-			if($share_basket = json_decode($pdi->shareBasket($_REQUEST), true)) {
-//				print_r($inalias_reg);
-				if(isset($share_basket["Status"])) {
-					if($share_basket["Status"] == "ERROR") {
-						error($share_basket["Message"], 429);
-					}
-				}
-			}
-			success("Share basket request being processed", 200);
-		}
 	} else {
 		error("Method is invalid", 400);
 	}

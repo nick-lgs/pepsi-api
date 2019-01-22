@@ -1,0 +1,10 @@
+<marketing>
+	<paths>
+		<path>
+			<inputpath>/Data/Pepsi/WIP</inputpath>
+			<outputpath>/Data/Pepsi/Marketing Assets</outputpath>
+			<inputsubfolders>/{1}/{2}/{3}/{4}</inputsubfolders>
+			<outputsubfolders>/{2}/{3}/{4}</outputsubfolders>
+		</path>
+	</paths>
+</marketing>

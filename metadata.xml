@@ -1,0 +1,22 @@
+<metadata>
+	<groups>
+		<group>
+			<name>Countries</name>
+			<type>boolean</type>
+			<fields>
+				<field>
+					<id>199</id>
+					<display>France</display>
+				</field>
+				<field>
+					<id>200</id>
+					<display>Germany</display>
+				</field>
+				<field>
+					<id>201</id>
+					<display>UK</display>
+				</field>
+			</fields>
+		</group>
+	</groups>
+</metadata>
